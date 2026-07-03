@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Throwaway generator for the skuload mark icons. Run once to (re)generate
+    assets/app.ico + assets/tray.ico, then commit the .ico files. Not part of the
+    app build. Targets plain net8.0 so it runs on macOS/Linux/Windows.
+
+    Usage (from print-bridge/):  dotnet run  (project tools/icongen; writes to assets/)
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SkiaSharp" Version="2.88.8" />
+    <!-- Headless raster backend so SkiaSharp works without a display / GPU. -->
+    <PackageReference Include="SkiaSharp.NativeAssets.macOS" Version="2.88.8" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="2.88.8" />
+  </ItemGroup>
+
+</Project>

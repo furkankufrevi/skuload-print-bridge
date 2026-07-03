@@ -1,0 +1,87 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    skuload print bridge — a tiny Windows tray app that exposes a localhost
+    HTTP endpoint so the web app can print shipping labels directly to a
+    physical printer (no browser print dialog).
+
+    Packaged + auto-updated with Velopack; CI builds a Setup.exe on Windows.
+    Build targets Windows desktop but cross-builds from macOS/Linux CI via
+    EnableWindowsTargeting. See README.md.
+  -->
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+
+    <AssemblyName>skuload-print-bridge</AssemblyName>
+    <RootNamespace>Skuload.PrintBridge</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>assets/app.ico</ApplicationIcon>
+
+    <Product>skuload print bridge</Product>
+    <Company>skuload</Company>
+    <Version>1.0.0</Version>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+
+    <!-- Let `dotnet build`/`publish` for win-x64 run on macOS/Linux. -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+  </PropertyGroup>
+
+  <!--
+    Release publish is a self-contained win-x64 FOLDER (not a single file):
+    Velopack manages the unpacked app + delta updates. `vpk pack` consumes this
+    publish folder. No .NET install needed on the target PC.
+  -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+  </PropertyGroup>
+
+  <!-- The icongen helper (tools/) is a separate project; keep its sources out. -->
+  <ItemGroup>
+    <Compile Remove="tools/**/*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- PDF -> raster pages (pdfium under the hood) for silent printing. -->
+    <PackageReference Include="PDFtoImage" Version="4.1.1" />
+    <PackageReference Include="SkiaSharp" Version="2.88.8" />
+    <!-- Installer + auto-update (GitHub Releases feed). -->
+    <PackageReference Include="Velopack" Version="1.2.0" />
+  </ItemGroup>
+
+  <!-- Brand icons, loaded at runtime for the tray + window title bars. -->
+  <ItemGroup>
+    <EmbeddedResource Include="assets/app.ico">
+      <LogicalName>app.ico</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="assets/tray.ico">
+      <LogicalName>tray.ico</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
+  <!-- Bundled brand fonts (OFL). Embedded, loaded privately at runtime. -->
+  <ItemGroup>
+    <EmbeddedResource Include="assets/fonts/Geist-Regular.ttf">
+      <LogicalName>Geist-Regular.ttf</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="assets/fonts/Geist-Medium.ttf">
+      <LogicalName>Geist-Medium.ttf</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="assets/fonts/Geist-SemiBold.ttf">
+      <LogicalName>Geist-SemiBold.ttf</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="assets/fonts/GeistMono-Regular.ttf">
+      <LogicalName>GeistMono-Regular.ttf</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
+</Project>

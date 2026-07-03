@@ -1,0 +1,84 @@
+name: release
+
+# Cut a Velopack release (Setup.exe + delta packages) and publish it to GitHub
+# Releases, which is also the app's auto-update feed. Trigger by pushing a tag:
+#
+#   git tag v1.0.1 && git push origin v1.0.1
+#
+# or run manually from the Actions tab (provide the version).
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, e.g. 1.0.1 (no leading v)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Resolve version
+        id: ver
+        shell: pwsh
+        run: |
+          $v = "${{ github.event.inputs.version }}"
+          if (-not $v) { $v = "${{ github.ref_name }}" -replace '^v','' }
+          echo "version=$v" >> $env:GITHUB_OUTPUT
+          echo "Releasing version $v"
+
+      - name: Add global tools to PATH
+        shell: pwsh
+        run: echo "$env:USERPROFILE\.dotnet\tools" >> $env:GITHUB_PATH
+
+      - name: Install Velopack CLI
+        run: dotnet tool install -g vpk --version 1.2.0
+
+      - name: Publish (self-contained win-x64)
+        run: >
+          dotnet publish PrintBridge.csproj -c Release -r win-x64 --self-contained
+          -p:Version=${{ steps.ver.outputs.version }} -o publish
+
+      - name: Download previous release (for delta updates)
+        continue-on-error: true # first release has nothing to download
+        run: >
+          vpk download github
+          --repoUrl https://github.com/furkankufrevi/skuload-print-bridge
+          --token ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pack
+        run: >
+          vpk pack
+          --packId skuload-print-bridge
+          --packVersion ${{ steps.ver.outputs.version }}
+          --packDir publish
+          --mainExe skuload-print-bridge.exe
+          --packTitle "skuload print bridge"
+          --packAuthors "skuload"
+          --icon assets/app.ico
+          --runtime win-x64
+        # Code signing (later): add --signTemplate / --signParams with a cert
+        # once available, and provide the cert via an Actions secret.
+
+      - name: Publish to GitHub Releases
+        run: >
+          vpk upload github
+          --repoUrl https://github.com/furkankufrevi/skuload-print-bridge
+          --token ${{ secrets.GITHUB_TOKEN }}
+          --publish
+          --releaseName "skuload print bridge ${{ steps.ver.outputs.version }}"
+          --tag v${{ steps.ver.outputs.version }}
