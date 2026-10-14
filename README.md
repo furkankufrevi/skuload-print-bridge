@@ -32,9 +32,14 @@ the chosen printer.
 
 ## HTTP API
 
-All endpoints are open CORS (any origin is reflected) and answer the Chrome
-Private Network Access preflight. The server only listens on loopback, so it
-isn't reachable from the network regardless.
+Only the Skuload app's origins may call it: `https://app.skuload.com`,
+`https://test-app.skuload.com` and the local dev server (`http://localhost:4000`,
+`http://127.0.0.1:4000`), plus any listed in `extraAllowedOrigins` in
+`settings.json`. They get CORS and the Chrome Private Network Access opt-in. A
+request from any other website gets **403** with no CORS headers. A caller with no
+`Origin` header (a local tool, not a browser page) may use `/ping` and `/printers`
+but not `/print`. The server only listens on loopback, so it isn't reachable from
+the network either.
 
 ### `GET /ping`
 Liveness + capabilities. The web app calls this to detect whether the bridge is
@@ -96,8 +101,10 @@ dial in the page setup before going live.
 ## Security model
 
 - Binds to `127.0.0.1` only — never reachable from the network.
-- Open CORS (any origin) — so the live web app works with no per-origin setup.
-  The loopback-only bind is what keeps it private.
+- Origin allow-list: only Skuload pages can list printers or print. Before 1.0.1
+  CORS was open, so any website open in the same browser could print.
+- `HttpListener` only accepts the `127.0.0.1:<port>` host, so DNS-rebinding pages
+  (another host name pointing at 127.0.0.1) are refused before reaching the routes.
 - Runs as the current user (`asInvoker`) — no admin/UAC.
 
 ## Install

@@ -7,9 +7,13 @@ namespace Skuload.PrintBridge;
 
 /// <summary>
 /// The localhost HTTP surface the web app talks to. Binds to 127.0.0.1 only
-/// (never a routable interface), so it isn't reachable from the network. CORS
-/// is open — any origin is reflected — and it answers the Chrome Private
-/// Network Access preflight so an HTTPS page can reach it. Routes:
+/// (never a routable interface), so it isn't reachable from the network.
+/// Only the Skuload app's own origins (see <see cref="BuiltInOrigins"/>, plus
+/// <see cref="Settings.ExtraAllowedOrigins"/>) get CORS and the Chrome Private
+/// Network Access opt-in. A request from any other website gets 403, so a page
+/// open in the same browser can't list the printers or print. A caller with no
+/// Origin (a local tool, not a browser page) may read <c>/ping</c> and
+/// <c>/printers</c> but not print. Routes:
 /// <list type="bullet">
 ///   <item><c>GET  /ping</c> — liveness + capabilities (printers, version).</item>
 ///   <item><c>GET  /printers</c> — installed printer names.</item>
@@ -22,6 +26,18 @@ internal sealed class BridgeServer : IDisposable
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    };
+
+    /// <summary>
+    /// Pages allowed to use the bridge: production, the test environment and
+    /// the local dev server (<c>next dev -p 4000</c>).
+    /// </summary>
+    private static readonly string[] BuiltInOrigins =
+    {
+        "https://app.skuload.com",
+        "https://test-app.skuload.com",
+        "http://localhost:4000",
+        "http://127.0.0.1:4000",
     };
 
     private readonly Settings _settings;
@@ -115,10 +131,30 @@ internal sealed class BridgeServer : IDisposable
     {
         var req = ctx.Request;
         var origin = req.Headers["Origin"];
-        ApplyCors(ctx, origin);
+        var allowed = IsAllowedOrigin(origin);
+        ctx.Response.Headers["Cache-Control"] = "no-store";
+
+        // Browsers send Origin on every cross-origin request and every POST, so an
+        // unknown origin is another website: refuse it without any CORS header.
+        if (!string.IsNullOrEmpty(origin) && !allowed)
+        {
+            Logger.Warn($"Refused a request from '{origin}': not a Skuload page.");
+            WriteJson(ctx, 403, new { ok = false, error = "This page is not allowed to use the print bridge." });
+            return;
+        }
+
+        if (allowed)
+        {
+            ApplyCors(ctx, origin!);
+        }
 
         if (string.Equals(req.HttpMethod, "OPTIONS", StringComparison.OrdinalIgnoreCase))
         {
+            if (!allowed)
+            {
+                WriteJson(ctx, 403, new { ok = false, error = "Origin required." });
+                return;
+            }
             ApplyPreflight(ctx, req);
             ctx.Response.StatusCode = 204;
             return;
@@ -136,6 +172,12 @@ internal sealed class BridgeServer : IDisposable
                 break;
 
             case ("POST", "/print"):
+                if (!allowed)
+                {
+                    // Printing is only for the Skuload page, never for a caller without an Origin.
+                    WriteJson(ctx, 403, new { ok = false, error = "Printing is only allowed from Skuload." });
+                    break;
+                }
                 HandlePrint(ctx);
                 break;
 
@@ -194,21 +236,24 @@ internal sealed class BridgeServer : IDisposable
 
     // ---- CORS / Private Network Access ------------------------------------
 
-    private void ApplyCors(HttpListenerContext ctx, string? origin)
+    private bool IsAllowedOrigin(string? origin)
+    {
+        if (string.IsNullOrEmpty(origin))
+        {
+            return false;
+        }
+        var trimmed = origin.TrimEnd('/');
+        return BuiltInOrigins.Contains(trimmed, StringComparer.OrdinalIgnoreCase)
+               || (_settings.ExtraAllowedOrigins ?? new List<string>())
+                   .Any(o => string.Equals(o?.TrimEnd('/'), trimmed, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>CORS for an allowed origin only; the exact origin is echoed, never "*".</summary>
+    private static void ApplyCors(HttpListenerContext ctx, string origin)
     {
         var res = ctx.Response;
-        // No origin allow-list: reflect whatever origin asked (or "*" for
-        // non-browser callers). The server only listens on loopback anyway.
-        if (!string.IsNullOrEmpty(origin))
-        {
-            res.Headers["Access-Control-Allow-Origin"] = origin;
-            res.Headers["Vary"] = "Origin";
-        }
-        else
-        {
-            res.Headers["Access-Control-Allow-Origin"] = "*";
-        }
-        res.Headers["Cache-Control"] = "no-store";
+        res.Headers["Access-Control-Allow-Origin"] = origin;
+        res.Headers["Vary"] = "Origin";
     }
 
     private void ApplyPreflight(HttpListenerContext ctx, HttpListenerRequest req)
