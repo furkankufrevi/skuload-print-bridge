@@ -58,6 +58,12 @@ internal sealed class Settings
     /// <summary>Set once the first-run welcome has been shown.</summary>
     public bool WelcomeShown { get; set; }
 
+    /// <summary>
+    /// Extra web origins allowed to print (e.g. "https://staging.example.com"),
+    /// on top of the built-in Skuload origins in BridgeServer. Empty by default.
+    /// </summary>
+    public List<string> ExtraAllowedOrigins { get; set; } = new();
+
     public static Settings Load()
     {
         try
