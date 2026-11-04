@@ -1,0 +1,14 @@
+# Pentest 2026-10: PB-5 (GitHub Actions SHA ile sabit, güncellemeyi Dependabot önerir) ve PB-4 (pdfium / PDFtoImage güncellemeleri).
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels: ["deps"]
+  - package-ecosystem: "nuget"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels: ["deps"]
+    open-pull-requests-limit: 5
