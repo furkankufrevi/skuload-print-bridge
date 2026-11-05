@@ -29,19 +29,24 @@ internal sealed class BridgeServer : IDisposable
     };
 
     /// <summary>
-    /// Pages allowed to use the bridge: production, the test environment and
-    /// the local dev server (<c>next dev -p 4000</c>).
+    /// Pages allowed to use the bridge. A release build trusts production only;
+    /// a test machine adds <c>https://test-app.skuload.com</c> through
+    /// <see cref="Settings.ExtraAllowedOrigins"/>. Debug builds also trust the
+    /// test environment and the local dev server (<c>next dev -p 4000</c>).
     /// </summary>
     private static readonly string[] BuiltInOrigins =
     {
         "https://app.skuload.com",
+#if DEBUG
         "https://test-app.skuload.com",
         "http://localhost:4000",
         "http://127.0.0.1:4000",
+#endif
     };
 
     private readonly Settings _settings;
     private readonly CancellationTokenSource _cts = new();
+    private readonly SemaphoreSlim _printSlots = new(PrintLimits.MaxConcurrentJobs, PrintLimits.MaxConcurrentJobs);
     private HttpListener? _listener;
 
     /// <summary>The port we actually bound to (may differ from the request if it was busy).</summary>
@@ -67,9 +72,9 @@ internal sealed class BridgeServer : IDisposable
                 BoundPort = port;
                 if (port != _settings.Port)
                 {
+                    // Not saved: the web app only knows the configured port, so the
+                    // next start tries it again and the tray tells the user meanwhile.
                     Logger.Warn($"Port {_settings.Port} busy; bound to {port} instead.");
-                    _settings.Port = port;
-                    _settings.Save();
                 }
                 _ = Task.Run(AcceptLoopAsync);
                 Logger.Info($"Listening on http://127.0.0.1:{port}/");
@@ -118,8 +123,9 @@ internal sealed class BridgeServer : IDisposable
         }
         catch (Exception ex)
         {
+            // Details stay in the log; the caller only learns that it failed.
             Logger.Error("Request handling failed", ex);
-            TryWriteError(ctx, 500, ex.Message);
+            TryWriteError(ctx, 500, "Print failed. See the print bridge log.");
         }
         finally
         {
@@ -189,11 +195,21 @@ internal sealed class BridgeServer : IDisposable
 
     private void HandlePrint(HttpListenerContext ctx)
     {
-        PrintRequest? body;
-        using (var reader = new StreamReader(ctx.Request.InputStream, ctx.Request.ContentEncoding ?? Encoding.UTF8))
+        if (!TryReadBody(ctx.Request, out var raw))
         {
-            var raw = reader.ReadToEnd();
+            WriteJson(ctx, 413, new { ok = false, error = "The label is too large." });
+            return;
+        }
+
+        PrintRequest? body;
+        try
+        {
             body = JsonSerializer.Deserialize<PrintRequest>(raw, JsonOpts);
+        }
+        catch (JsonException)
+        {
+            WriteJson(ctx, 400, new { ok = false, error = "The request is not valid JSON." });
+            return;
         }
 
         if (body is null || string.IsNullOrWhiteSpace(body.LabelBase64))
@@ -208,16 +224,66 @@ internal sealed class BridgeServer : IDisposable
             return;
         }
 
-        var opts = PrintOptions.FromSettings(_settings, body.Printer, body.Copies);
-        var (used, pages) = PrintService.Print(bytes, body.Format, opts);
-        Logger.Info($"Printed {pages} page(s) to '{used}' ({bytes.Length} bytes).");
-        WriteJson(ctx, 200, new
+        if (!string.IsNullOrWhiteSpace(body.Printer)
+            && !PrintService.InstalledPrinters().Contains(body.Printer, StringComparer.OrdinalIgnoreCase))
         {
-            ok = true,
-            jobId = Guid.NewGuid().ToString("N"),
-            printer = used,
-            pages,
-        });
+            WriteJson(ctx, 400, new { ok = false, error = "Unknown printer." });
+            return;
+        }
+
+        if (!_printSlots.Wait(PrintLimits.QueueWait))
+        {
+            WriteJson(ctx, 429, new { ok = false, error = "The print bridge is busy. Try again." });
+            return;
+        }
+
+        try
+        {
+            var opts = PrintOptions.FromSettings(_settings, body.Printer, body.Copies);
+            var (used, pages) = PrintService.Print(bytes, body.Format, opts);
+            Logger.Info($"Printed {pages} page(s) to '{used}' ({bytes.Length} bytes).");
+            WriteJson(ctx, 200, new
+            {
+                ok = true,
+                jobId = Guid.NewGuid().ToString("N"),
+                printer = used,
+                pages,
+            });
+        }
+        catch (LabelRejectedException ex)
+        {
+            Logger.Warn($"Refused a label: {ex.Message}");
+            WriteJson(ctx, 422, new { ok = false, error = ex.Message });
+        }
+        finally
+        {
+            _printSlots.Release();
+        }
+    }
+
+    /// <summary>Reads the body, stopping at the limit even when no length was declared.</summary>
+    private static bool TryReadBody(HttpListenerRequest req, out string raw)
+    {
+        raw = string.Empty;
+        if (req.ContentLength64 > PrintLimits.MaxBodyBytes)
+        {
+            return false;
+        }
+
+        using var buffer = new MemoryStream();
+        var chunk = new byte[81920];
+        int read;
+        while ((read = req.InputStream.Read(chunk, 0, chunk.Length)) > 0)
+        {
+            if (buffer.Length + read > PrintLimits.MaxBodyBytes)
+            {
+                return false;
+            }
+            buffer.Write(chunk, 0, read);
+        }
+
+        raw = (req.ContentEncoding ?? Encoding.UTF8).GetString(buffer.GetBuffer(), 0, (int)buffer.Length);
+        return true;
     }
 
     private object Info() => new
@@ -245,7 +311,7 @@ internal sealed class BridgeServer : IDisposable
         var trimmed = origin.TrimEnd('/');
         return BuiltInOrigins.Contains(trimmed, StringComparer.OrdinalIgnoreCase)
                || (_settings.ExtraAllowedOrigins ?? new List<string>())
-                   .Any(o => string.Equals(o?.TrimEnd('/'), trimmed, StringComparison.OrdinalIgnoreCase));
+                   .Contains(trimmed, StringComparer.OrdinalIgnoreCase);
     }
 
     /// <summary>CORS for an allowed origin only; the exact origin is echoed, never "*".</summary>
@@ -340,6 +406,7 @@ internal sealed class BridgeServer : IDisposable
             // best-effort shutdown
         }
         _cts.Dispose();
+        _printSlots.Dispose();
     }
 
     private sealed record PrintRequest(string? LabelBase64, string? Format, string? Printer, int? Copies);

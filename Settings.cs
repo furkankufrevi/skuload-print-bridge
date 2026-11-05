@@ -59,8 +59,9 @@ internal sealed class Settings
     public bool WelcomeShown { get; set; }
 
     /// <summary>
-    /// Extra web origins allowed to print (e.g. "https://staging.example.com"),
-    /// on top of the built-in Skuload origins in BridgeServer. Empty by default.
+    /// Extra web origins allowed to print (e.g. "https://test-app.skuload.com"),
+    /// on top of the built-in Skuload origin in BridgeServer. Empty by default.
+    /// Only bare https origins are kept; anything else is dropped on load.
     /// </summary>
     public List<string> ExtraAllowedOrigins { get; set; } = new();
 
@@ -114,6 +115,27 @@ internal sealed class Settings
         MarginRightMm = Math.Clamp(MarginRightMm, 0, 100);
         MarginBottomMm = Math.Clamp(MarginBottomMm, 0, 100);
         Scaling = string.Equals(Scaling, "actual", StringComparison.OrdinalIgnoreCase) ? "actual" : "fit";
+        ExtraAllowedOrigins = CleanOrigins(ExtraAllowedOrigins);
         return this;
+    }
+
+    private static List<string> CleanOrigins(List<string>? origins)
+    {
+        var clean = new List<string>();
+        foreach (var entry in origins ?? new List<string>())
+        {
+            if (OriginRules.TryNormalize(entry, out var origin))
+            {
+                if (!clean.Contains(origin, StringComparer.OrdinalIgnoreCase))
+                {
+                    clean.Add(origin);
+                }
+            }
+            else
+            {
+                Logger.Warn($"Ignored extra origin '{entry}': only https://host[:port] is allowed.");
+            }
+        }
+        return clean;
     }
 }

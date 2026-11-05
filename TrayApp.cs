@@ -66,6 +66,11 @@ internal sealed class TrayApp : ApplicationContext
 
     private void ShowFirstRunOrStatus(int port)
     {
+        if (WarnIfPortMoved(port))
+        {
+            return;
+        }
+
         if (!_settings.WelcomeShown)
         {
             _settings.WelcomeShown = true;
@@ -80,6 +85,22 @@ internal sealed class TrayApp : ApplicationContext
             AppInfo.DisplayName,
             port > 0 ? $"Running on 127.0.0.1:{port}" : "Server failed to start — see logs",
             port > 0 ? ToolTipIcon.Info : ToolTipIcon.Error);
+    }
+
+    /// <summary>
+    /// The web app only calls the configured port, so running on another one
+    /// means labels won't reach this bridge. Tell the user instead of staying quiet.
+    /// </summary>
+    private bool WarnIfPortMoved(int port)
+    {
+        if (port <= 0 || port == _settings.Port)
+        {
+            return false;
+        }
+
+        Notify(ToolTipIcon.Warning, AppInfo.DisplayName,
+            $"Port {_settings.Port} is in use, so Skuload can't reach this bridge (running on {port}). Close the other program and restart.");
+        return true;
     }
 
     private int StartServer()
@@ -318,6 +339,11 @@ internal sealed class TrayApp : ApplicationContext
         _server = new BridgeServer(_settings);
         var port = StartServer();
         _tray.Text = Truncate($"{AppInfo.DisplayName} · 127.0.0.1:{port}", 63);
+        if (WarnIfPortMoved(port))
+        {
+            return;
+        }
+
         Notify(
             port > 0 ? ToolTipIcon.Info : ToolTipIcon.Error,
             AppInfo.DisplayName,
