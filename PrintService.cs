@@ -136,7 +136,7 @@ internal static class PrintService
             "PDF" => LabelFormat.Pdf,
             "PNG" => LabelFormat.Png,
             "JPG" or "JPEG" => LabelFormat.Jpeg,
-            _ => throw new InvalidOperationException("Unrecognised label format."),
+            _ => throw new LabelRejectedException("Unrecognised label format."),
         };
     }
 
@@ -147,14 +147,61 @@ internal static class PrintService
             return RenderPdf(data, dpi);
         }
 
-        // PNG/JPEG: decode into a stream-independent bitmap.
+        // PNG/JPEG: read the size from the header first, then decode into a
+        // stream-independent bitmap.
         using var ms = new MemoryStream(data, writable: false);
-        using var decoded = new Bitmap(ms);
-        return new List<Bitmap> { new Bitmap(decoded) };
+        try
+        {
+            using (var header = Image.FromStream(ms, useEmbeddedColorManagement: false, validateImageData: false))
+            {
+                if ((long)header.Width * header.Height > PrintLimits.MaxImagePixels)
+                {
+                    throw new LabelRejectedException("The label image is too large.");
+                }
+            }
+
+            ms.Position = 0;
+            using var decoded = new Bitmap(ms);
+            return new List<Bitmap> { new Bitmap(decoded) };
+        }
+        catch (ArgumentException)
+        {
+            throw new LabelRejectedException("The label image could not be read.");
+        }
+    }
+
+    /// <summary>Refuses a PDF before rendering if it has too many pages or a huge page.</summary>
+    private static void CheckPdfLimits(byte[] pdf)
+    {
+        int count;
+        try
+        {
+            count = Conversion.GetPageCount(pdf);
+        }
+        catch (Exception ex) when (ex is not LabelRejectedException)
+        {
+            Logger.Error("Reading the PDF failed", ex);
+            throw new LabelRejectedException("The label PDF could not be read.");
+        }
+
+        if (count > PrintLimits.MaxPages)
+        {
+            throw new LabelRejectedException($"The label has too many pages (limit {PrintLimits.MaxPages}).");
+        }
+
+        for (var page = 0; page < count; page++)
+        {
+            var size = Conversion.GetPageSize(pdf, (Index)page);
+            if (size.Width > PrintLimits.MaxPageSidePoints || size.Height > PrintLimits.MaxPageSidePoints)
+            {
+                throw new LabelRejectedException("A label page is too large.");
+            }
+        }
     }
 
     private static List<Bitmap> RenderPdf(byte[] pdf, int dpi)
     {
+        CheckPdfLimits(pdf);
         var pages = new List<Bitmap>();
         foreach (var sk in Conversion.ToImages(pdf, options: new RenderOptions(Dpi: dpi)))
         {
@@ -170,7 +217,7 @@ internal static class PrintService
 
         if (pages.Count == 0)
         {
-            throw new InvalidOperationException("PDF produced no pages.");
+            throw new LabelRejectedException("The label PDF has no pages.");
         }
         return pages;
     }

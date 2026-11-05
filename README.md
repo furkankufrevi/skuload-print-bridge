@@ -32,14 +32,30 @@ the chosen printer.
 
 ## HTTP API
 
-Only the Skuload app's origins may call it: `https://app.skuload.com`,
-`https://test-app.skuload.com` and the local dev server (`http://localhost:4000`,
-`http://127.0.0.1:4000`), plus any listed in `extraAllowedOrigins` in
-`settings.json`. They get CORS and the Chrome Private Network Access opt-in. A
-request from any other website gets **403** with no CORS headers. A caller with no
-`Origin` header (a local tool, not a browser page) may use `/ping` and `/printers`
-but not `/print`. The server only listens on loopback, so it isn't reachable from
-the network either.
+Only the Skuload app may call it: a release build trusts `https://app.skuload.com`
+and any bare `https://` origin listed in `extraAllowedOrigins` in `settings.json`.
+Debug builds also trust `https://test-app.skuload.com` and the local dev server
+(`http://localhost:4000`, `http://127.0.0.1:4000`). On a machine that tests against
+the test environment with a release build, add `https://test-app.skuload.com` to
+`extraAllowedOrigins`. Entries that aren't `https://host[:port]` are dropped on load.
+Allowed origins get CORS and the Chrome Private Network Access opt-in. A request
+from any other website gets **403** with no CORS headers. A caller with no `Origin`
+header (a local tool, not a browser page) may use `/ping` and `/printers` but not
+`/print`. The server only listens on loopback, so it isn't reachable from the
+network either.
+
+`/print` limits: 10 MB request body (**413**), 20 pages and a 24 inch page side for
+PDFs, 50 megapixels for images (**422**), two jobs at a time (**429** after a 10
+second wait). A `printer` that isn't installed gets **400**. Unexpected failures
+return a generic **500**; the details are only in the log.
+
+If the configured port is busy the bridge runs on the next free one for that
+session, warns in the tray and tries the configured port again on the next start.
+The web app only calls the configured port, so printing won't work until it's free.
+
+Labels stay in memory and the log records only size, page count and printer. If a
+printer has Windows' "Keep printed documents" option on, the spool file stays on
+disk: keep that option off on warehouse printers.
 
 ### `GET /ping`
 Liveness + capabilities. The web app calls this to detect whether the bridge is
