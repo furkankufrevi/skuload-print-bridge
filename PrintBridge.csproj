@@ -55,7 +55,7 @@
     <PackageReference Include="PDFtoImage" Version="4.1.1" />
     <PackageReference Include="SkiaSharp" Version="2.88.8" />
     <!-- Installer + auto-update (GitHub Releases feed). -->
-    <PackageReference Include="Velopack" Version="1.2.0" />
+    <PackageReference Include="Velopack" Version="1.2.161" />
   </ItemGroup>
 
   <!-- Brand icons, loaded at runtime for the tray + window title bars. -->
