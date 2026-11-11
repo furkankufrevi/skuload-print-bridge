@@ -53,7 +53,7 @@
   <ItemGroup>
     <!-- PDF -> raster pages (pdfium under the hood) for silent printing. -->
     <PackageReference Include="PDFtoImage" Version="4.1.1" />
-    <PackageReference Include="SkiaSharp" Version="2.88.8" />
+    <PackageReference Include="SkiaSharp" Version="4.155.0" />
     <!-- Installer + auto-update (GitHub Releases feed). -->
     <PackageReference Include="Velopack" Version="1.2.0" />
   </ItemGroup>
